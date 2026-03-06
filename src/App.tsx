@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { CheckCircle2, Circle, ChevronRight, Map, Skull, Trophy, RotateCcw, Play, Pause, Timer, BookOpen, Star, Swords, Shield, X } from 'lucide-react';
-import { poeData } from './data';
+import { CheckCircle2, Circle, ChevronRight, Map, Skull, Trophy, RotateCcw, Play, Pause, Timer, BookOpen, Star, Swords, Shield, X, Edit3, Save } from 'lucide-react';
+import { poeData, ActData } from './data';
 
 const loadState = <T,>(key: string, defaultValue: T): T => {
   const saved = localStorage.getItem(key);
@@ -27,6 +27,30 @@ const formatTime = (seconds: number) => {
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
+const dataToText = (data: ActData[]) => {
+  return data.map(act => `# ${act.title}\n${act.steps.join('\n')}`).join('\n\n');
+};
+
+const textToData = (text: string): ActData[] => {
+  const lines = text.split('\n');
+  const result: ActData[] = [];
+  let currentAct: ActData | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('# ')) {
+      if (currentAct) result.push(currentAct);
+      currentAct = { title: trimmed.substring(2).trim(), steps: [] };
+    } else if (currentAct) {
+      currentAct.steps.push(trimmed);
+    }
+  }
+  if (currentAct) result.push(currentAct);
+  return result;
+};
+
 const majorGods = ['Brine King', 'Arakaali', 'Solaris', 'Lunaris'];
 const minorGods = ['Abberath', 'Gruthkul', 'Yugul', 'Shakari', 'Tukohama', 'Ralakesh', 'Garukhan', 'Ryslatha'];
 
@@ -43,12 +67,26 @@ export default function App() {
   const [notes, setNotes] = useState(() => loadState('poe-notes', ''));
   const [pantheons, setPantheons] = useState<Record<string, boolean>>(() => loadState('poe-pantheons', {}));
 
+  // Custom Route Editor State
+  const [customRouteText, setCustomRouteText] = useState(() => loadState('poe-custom-route', ''));
+  const [isEditingRoute, setIsEditingRoute] = useState(false);
+  const [editorText, setEditorText] = useState('');
+
+  const activeData = useMemo(() => {
+    if (customRouteText) {
+      const parsed = textToData(customRouteText);
+      if (parsed.length > 0) return parsed;
+    }
+    return poeData;
+  }, [customRouteText]);
+
   useEffect(() => localStorage.setItem('poe-progress', JSON.stringify(completedSteps)), [completedSteps]);
   useEffect(() => localStorage.setItem('poe-time', JSON.stringify(timeElapsed)), [timeElapsed]);
   useEffect(() => localStorage.setItem('poe-splits', JSON.stringify(splits)), [splits]);
   useEffect(() => localStorage.setItem('poe-bandit', JSON.stringify(banditChoice)), [banditChoice]);
   useEffect(() => localStorage.setItem('poe-notes', JSON.stringify(notes)), [notes]);
   useEffect(() => localStorage.setItem('poe-pantheons', JSON.stringify(pantheons)), [pantheons]);
+  useEffect(() => localStorage.setItem('poe-custom-route', JSON.stringify(customRouteText)), [customRouteText]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -64,18 +102,20 @@ export default function App() {
       const nextState = { ...prev, [key]: !prev[key] };
       
       // Record split time if act is completed
-      const steps = poeData[actIndex].steps;
-      const isNowComplete = steps.every((_, j) => nextState[`${actIndex}-${j}`]);
-      if (isNowComplete && !prev[key]) {
-        setSplits(s => ({ ...s, [actIndex]: timeElapsed }));
+      if (activeData[actIndex]) {
+        const steps = activeData[actIndex].steps;
+        const isNowComplete = steps.every((_, j) => nextState[`${actIndex}-${j}`]);
+        if (isNowComplete && !prev[key]) {
+          setSplits(s => ({ ...s, [actIndex]: timeElapsed }));
+        }
       }
       
       return nextState;
     });
-  }, [timeElapsed]);
+  }, [timeElapsed, activeData]);
 
   const resetProgress = () => {
-    if (window.confirm('Are you sure you want to reset all progress? (Notes and Bandit choice will be kept)')) {
+    if (window.confirm('Are you sure you want to reset all progress? (Notes, Route, and Bandit choice will be kept)')) {
       setCompletedSteps({});
       setActiveActIndex(0);
       setTimeElapsed(0);
@@ -85,16 +125,33 @@ export default function App() {
     }
   };
 
+  const openEditor = () => {
+    setEditorText(customRouteText || dataToText(poeData));
+    setIsEditingRoute(true);
+  };
+
+  const saveRoute = () => {
+    setCustomRouteText(editorText);
+    setIsEditingRoute(false);
+  };
+
+  const resetRoute = () => {
+    if (window.confirm('Are you sure you want to revert to the default route?')) {
+      setCustomRouteText('');
+      setEditorText(dataToText(poeData));
+    }
+  };
+
   const nextObjective = useMemo(() => {
-    for (let i = 0; i < poeData.length; i++) {
-      for (let j = 0; j < poeData[i].steps.length; j++) {
+    for (let i = 0; i < activeData.length; i++) {
+      for (let j = 0; j < activeData[i].steps.length; j++) {
         if (!completedSteps[`${i}-${j}`]) {
-          return { actIndex: i, stepIndex: j, text: poeData[i].steps[j] };
+          return { actIndex: i, stepIndex: j, text: activeData[i].steps[j] };
         }
       }
     }
     return null;
-  }, [completedSteps]);
+  }, [completedSteps, activeData]);
 
   // Keyboard shortcut (Space) to toggle next objective
   useEffect(() => {
@@ -112,13 +169,59 @@ export default function App() {
   }, [nextObjective, toggleStep]);
 
   const calculateActProgress = (actIndex: number) => {
-    const steps = poeData[actIndex].steps;
+    if (!activeData[actIndex]) return 0;
+    const steps = activeData[actIndex].steps;
+    if (steps.length === 0) return 0;
     const completed = steps.filter((_, j) => completedSteps[`${actIndex}-${j}`]).length;
     return Math.round((completed / steps.length) * 100);
   };
 
+  // Ensure activeActIndex is valid
+  const currentAct = activeData[activeActIndex] || activeData[0];
+  const safeActIndex = activeData[activeActIndex] ? activeActIndex : 0;
+
   return (
     <div className="min-h-screen bg-[#0f1115] text-slate-200 font-sans selection:bg-amber-500/30 overflow-x-hidden">
+      {/* Route Editor Modal */}
+      {isEditingRoute && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1a1d24] border border-white/10 rounded-2xl w-full max-w-4xl h-[90vh] flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-amber-500" /> Edit Route
+              </h2>
+              <button onClick={() => setIsEditingRoute(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 bg-black/20 border-b border-white/5 text-sm text-slate-400">
+              <p>Use <strong># Act Name</strong> to create a new section.</p>
+              <p>Write each step on a new line. Empty lines are ignored.</p>
+              <p className="text-amber-500/80 mt-2 text-xs">Warning: Changing the route structure might misalign your currently checked steps!</p>
+            </div>
+            <textarea
+              value={editorText}
+              onChange={(e) => setEditorText(e.target.value)}
+              className="flex-1 w-full bg-transparent text-sm text-slate-300 p-4 resize-none focus:outline-none font-mono leading-relaxed"
+              spellCheck={false}
+            />
+            <div className="p-4 border-t border-white/10 flex items-center justify-between bg-black/20 rounded-b-2xl">
+              <button onClick={resetRoute} className="text-sm text-rose-400 hover:text-rose-300 font-medium px-4 py-2">
+                Reset to Default
+              </button>
+              <div className="flex gap-3">
+                <button onClick={() => setIsEditingRoute(false)} className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">
+                  Cancel
+                </button>
+                <button onClick={saveRoute} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-sm font-bold rounded-lg transition-colors flex items-center gap-2">
+                  <Save className="w-4 h-4" /> Save Route
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-[#1a1d24] border-b border-white/5 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -136,6 +239,14 @@ export default function App() {
                 {isTimerRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
               </button>
             </div>
+
+            <button
+              onClick={openEditor}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors"
+            >
+              <Edit3 className="w-4 h-4" />
+              <span className="hidden sm:inline">Edit Route</span>
+            </button>
 
             <button
               onClick={() => setNotesOpen(true)}
@@ -180,10 +291,10 @@ export default function App() {
         {/* Sidebar Navigation */}
         <aside className="space-y-1">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 px-3">Campaign</h2>
-          {poeData.map((act, index) => {
+          {activeData.map((act, index) => {
             const progress = calculateActProgress(index);
-            const isCompleted = progress === 100;
-            const isActive = activeActIndex === index;
+            const isCompleted = progress === 100 && act.steps.length > 0;
+            const isActive = safeActIndex === index;
 
             return (
               <button
@@ -197,18 +308,18 @@ export default function App() {
                     : 'text-slate-200 hover:bg-white/5'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 truncate">
                   {isCompleted ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                   ) : (
-                    <div className={`w-4 h-4 rounded-full border-2 ${isActive ? 'border-amber-500' : 'border-slate-600'}`} />
+                    <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${isActive ? 'border-amber-500' : 'border-slate-600'}`} />
                   )}
-                  {act.title}
+                  <span className="truncate">{act.title}</span>
                 </div>
                 {isCompleted && splits[index] ? (
-                  <span className="text-[10px] text-slate-500 font-mono">{formatTime(splits[index])}</span>
+                  <span className="text-[10px] text-slate-500 font-mono shrink-0 ml-2">{formatTime(splits[index])}</span>
                 ) : progress > 0 && progress < 100 ? (
-                  <span className="text-[10px] text-slate-500">{progress}%</span>
+                  <span className="text-[10px] text-slate-500 shrink-0 ml-2">{progress}%</span>
                 ) : null}
               </button>
             );
@@ -226,11 +337,11 @@ export default function App() {
                   <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/20 hidden sm:inline-block">Press Space</span>
                 </p>
                 <div className="text-sm text-slate-300">
-                  <span className="font-semibold text-white mr-2">{poeData[nextObjective.actIndex].title}:</span>
+                  <span className="font-semibold text-white mr-2">{activeData[nextObjective.actIndex].title}:</span>
                   <StepText text={nextObjective.text} />
                 </div>
               </div>
-              {activeActIndex !== nextObjective.actIndex && (
+              {safeActIndex !== nextObjective.actIndex && (
                 <button
                   onClick={() => setActiveActIndex(nextObjective.actIndex)}
                   className="shrink-0 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-sm font-medium rounded-lg transition-colors"
@@ -242,7 +353,7 @@ export default function App() {
           )}
 
           {/* Special UI: Bandit Choice (Act 2) */}
-          {activeActIndex === 1 && (
+          {currentAct.title.includes('Act 2') && (
             <div className="bg-[#1a1d24] rounded-xl border border-white/5 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
               <div className="flex items-center gap-2">
                 <Swords className="w-5 h-5 text-amber-500" />
@@ -270,7 +381,7 @@ export default function App() {
           )}
 
           {/* Special UI: Pantheon Tracker (Mapping) */}
-          {poeData[activeActIndex].title === 'Mapping' && (
+          {currentAct.title.includes('Mapping') && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-[#1a1d24] rounded-xl border border-white/5 p-5 shadow-lg">
                 <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
@@ -322,59 +433,65 @@ export default function App() {
             <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-                  {poeData[activeActIndex].title === 'Mapping' ? (
+                  {currentAct.title.includes('Mapping') ? (
                     <Map className="w-6 h-6 text-amber-500" />
                   ) : (
                     <Trophy className="w-6 h-6 text-amber-500" />
                   )}
-                  {poeData[activeActIndex].title}
+                  {currentAct.title}
                 </h2>
                 <div className="mt-4 h-1.5 w-48 sm:w-64 bg-slate-800 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-amber-500 transition-all duration-500 ease-out"
-                    style={{ width: `${calculateActProgress(activeActIndex)}%` }}
+                    style={{ width: `${calculateActProgress(safeActIndex)}%` }}
                   />
                 </div>
               </div>
               
               {/* Act Split Time Display */}
-              {splits[activeActIndex] && (
+              {splits[safeActIndex] && (
                 <div className="text-right">
                   <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Split Time</p>
-                  <p className="font-mono text-lg text-emerald-400">{formatTime(splits[activeActIndex])}</p>
+                  <p className="font-mono text-lg text-emerald-400">{formatTime(splits[safeActIndex])}</p>
                 </div>
               )}
             </div>
 
             <div className="divide-y divide-white/5">
-              {poeData[activeActIndex].steps.map((step, stepIndex) => {
-                const isCompleted = completedSteps[`${activeActIndex}-${stepIndex}`];
-                const isPassive = isPassiveQuest(step);
-                
-                return (
-                  <button
-                    key={stepIndex}
-                    onClick={() => toggleStep(activeActIndex, stepIndex)}
-                    className={`w-full text-left p-4 sm:p-6 flex items-start gap-4 transition-colors hover:bg-white/[0.02] group ${
-                      isCompleted ? 'opacity-50' : ''
-                    }`}
-                  >
-                    <div className="shrink-0 mt-0.5 relative">
-                      {isCompleted ? (
-                        <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                      ) : (
-                        <Circle className="w-6 h-6 text-slate-600 group-hover:text-amber-500 transition-colors" />
-                      )}
-                      {isPassive && !isCompleted && (
-                        <Star className="w-3 h-3 text-amber-400 absolute -top-1 -right-1 fill-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.5)]" />
-                      )}
-                    </div>
-                    <div className={`flex-1 transition-all ${isCompleted ? 'line-through decoration-slate-600' : ''}`}>
-                      <StepText text={step} />
-                    </div>
-                  </button>
-                );
-              })}
+              {currentAct.steps.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-sm">
+                  No steps defined for this section.
+                </div>
+              ) : (
+                currentAct.steps.map((step, stepIndex) => {
+                  const isCompleted = completedSteps[`${safeActIndex}-${stepIndex}`];
+                  const isPassive = isPassiveQuest(step);
+                  
+                  return (
+                    <button
+                      key={stepIndex}
+                      onClick={() => toggleStep(safeActIndex, stepIndex)}
+                      className={`w-full text-left p-4 sm:p-6 flex items-start gap-4 transition-colors hover:bg-white/[0.02] group ${
+                        isCompleted ? 'opacity-50' : ''
+                      }`}
+                    >
+                      <div className="shrink-0 mt-0.5 relative">
+                        {isCompleted ? (
+                          <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                        ) : (
+                          <Circle className="w-6 h-6 text-slate-600 group-hover:text-amber-500 transition-colors" />
+                        )}
+                        {isPassive && !isCompleted && (
+                          <Star className="w-3 h-3 text-amber-400 absolute -top-1 -right-1 fill-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.5)]" />
+                        )}
+                      </div>
+                      <div className={`flex-1 transition-all ${isCompleted ? 'line-through decoration-slate-600' : ''}`}>
+                        <StepText text={step} />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
