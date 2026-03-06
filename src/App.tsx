@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { CheckCircle2, Circle, ChevronRight, Map, Skull, Trophy, RotateCcw, Play, Pause, Timer, BookOpen, Star, Swords, Shield, X, Edit3, Save } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, Map, Skull, Trophy, RotateCcw, Play, Pause, Timer, BookOpen, Star, Swords, Shield, X, Edit3, Save, Wrench, Copy, Download, Upload } from 'lucide-react';
 import { poeData, ActData } from './data';
 
 const loadState = <T,>(key: string, defaultValue: T): T => {
@@ -51,6 +51,15 @@ const textToData = (text: string): ActData[] => {
   return result;
 };
 
+const getActLevelRange = (actIndex: number, title: string) => {
+  if (title.toLowerCase().includes('map')) return 'Lvl 68+';
+  const ranges = [
+    'Lvl 1-12', 'Lvl 13-22', 'Lvl 23-32', 'Lvl 33-40', 'Lvl 41-44',
+    'Lvl 45-49', 'Lvl 50-54', 'Lvl 55-60', 'Lvl 61-63', 'Lvl 64-67'
+  ];
+  return ranges[actIndex] || '';
+};
+
 const majorGods = ['Brine King', 'Arakaali', 'Solaris', 'Lunaris'];
 const minorGods = ['Abberath', 'Gruthkul', 'Yugul', 'Shakari', 'Tukohama', 'Ralakesh', 'Garukhan', 'Ryslatha'];
 
@@ -71,6 +80,18 @@ export default function App() {
   const [customRouteText, setCustomRouteText] = useState(() => loadState('poe-custom-route', ''));
   const [isEditingRoute, setIsEditingRoute] = useState(false);
   const [editorText, setEditorText] = useState('');
+
+  // Tools Modal State
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [activeToolTab, setActiveToolTab] = useState<'regex' | 'recipes' | 'import'>('regex');
+  
+  // Regex State
+  const [regexColors, setRegexColors] = useState({ r: 0, g: 0, b: 0 });
+  const [regexLinks, setRegexLinks] = useState(3);
+  const [regexMs, setRegexMs] = useState(false);
+  
+  // Import/Export State
+  const [importString, setImportString] = useState('');
 
   const activeData = useMemo(() => {
     if (customRouteText) {
@@ -176,6 +197,79 @@ export default function App() {
     return Math.round((completed / steps.length) * 100);
   };
 
+  // Generate Regex
+  const generatedRegex = useMemo(() => {
+    const { r, g, b } = regexColors;
+    const total = r + g + b;
+    if (total === 0 && !regexMs) return '';
+    
+    let parts = [];
+    if (total > 0) {
+      if (total > regexLinks) return 'Error: Colors exceed links';
+      
+      // Simple generator for 3-link and 4-link exact color combinations
+      const colors = [
+        ...Array(r).fill('r'),
+        ...Array(g).fill('g'),
+        ...Array(b).fill('b')
+      ];
+      
+      // Fill remaining with wildcards if needed, but usually vendors we just search exact
+      const getPermutations = (arr: string[]): string[][] => {
+        if (arr.length <= 1) return [arr];
+        const perms: string[][] = [];
+        for (let i = 0; i < arr.length; i++) {
+          const rest = getPermutations([...arr.slice(0, i), ...arr.slice(i + 1)]);
+          for (const p of rest) perms.push([arr[i], ...p]);
+        }
+        return perms;
+      };
+      
+      const uniquePerms = Array.from(new Set(getPermutations(colors).map(p => p.join('-'))));
+      parts.push(`(${uniquePerms.join('|')})`);
+    }
+    
+    if (regexMs) {
+      parts.push('nne'); // 'nne' matches 'Runner's'
+    }
+    
+    return parts.join('|');
+  }, [regexColors, regexLinks, regexMs]);
+
+  const handleExport = () => {
+    const data = {
+      completedSteps,
+      timeElapsed,
+      splits,
+      banditChoice,
+      notes,
+      pantheons,
+      customRouteText
+    };
+    const str = btoa(encodeURIComponent(JSON.stringify(data)));
+    navigator.clipboard.writeText(str);
+    alert('Profile copied to clipboard!');
+  };
+
+  const handleImport = () => {
+    try {
+      const data = JSON.parse(decodeURIComponent(atob(importString)));
+      if (window.confirm('This will overwrite your current progress. Continue?')) {
+        if (data.completedSteps) setCompletedSteps(data.completedSteps);
+        if (data.timeElapsed) setTimeElapsed(data.timeElapsed);
+        if (data.splits) setSplits(data.splits);
+        if (data.banditChoice) setBanditChoice(data.banditChoice);
+        if (data.notes) setNotes(data.notes);
+        if (data.pantheons) setPantheons(data.pantheons);
+        if (data.customRouteText !== undefined) setCustomRouteText(data.customRouteText);
+        setToolsOpen(false);
+        setImportString('');
+      }
+    } catch (e) {
+      alert('Invalid import string!');
+    }
+  };
+
   // Ensure activeActIndex is valid
   const currentAct = activeData[activeActIndex] || activeData[0];
   const safeActIndex = activeData[activeActIndex] ? activeActIndex : 0;
@@ -222,6 +316,168 @@ export default function App() {
         </div>
       )}
 
+      {/* Tools Modal */}
+      {toolsOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1a1d24] border border-white/10 rounded-2xl w-full max-w-2xl flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-amber-500" /> Tools & Cheatsheets
+              </h2>
+              <button onClick={() => setToolsOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex border-b border-white/5">
+              <button 
+                onClick={() => setActiveToolTab('regex')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeToolTab === 'regex' ? 'text-amber-400 border-b-2 border-amber-500 bg-white/5' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]'}`}
+              >
+                Regex Generator
+              </button>
+              <button 
+                onClick={() => setActiveToolTab('recipes')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeToolTab === 'recipes' ? 'text-amber-400 border-b-2 border-amber-500 bg-white/5' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]'}`}
+              >
+                Vendor Recipes
+              </button>
+              <button 
+                onClick={() => setActiveToolTab('import')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeToolTab === 'import' ? 'text-amber-400 border-b-2 border-amber-500 bg-white/5' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]'}`}
+              >
+                Import / Export
+              </button>
+            </div>
+
+            <div className="p-6 max-h-[70vh] overflow-y-auto">
+              {activeToolTab === 'regex' && (
+                <div className="space-y-6">
+                  <p className="text-sm text-slate-400">Generate search strings to paste at vendors for finding specific socket colors or movement speed boots.</p>
+                  
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white mb-3">Required Colors</h4>
+                      <div className="space-y-3">
+                        {['r', 'g', 'b'].map(color => (
+                          <div key={color} className="flex items-center justify-between bg-black/20 p-2 rounded border border-white/5">
+                            <span className={`font-bold uppercase ${color === 'r' ? 'text-rose-400' : color === 'g' ? 'text-emerald-400' : 'text-blue-400'}`}>
+                              {color === 'r' ? 'Red' : color === 'g' ? 'Green' : 'Blue'}
+                            </span>
+                            <div className="flex items-center gap-3">
+                              <button onClick={() => setRegexColors(p => ({...p, [color]: Math.max(0, p[color as keyof typeof p] - 1)}))} className="w-6 h-6 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center">-</button>
+                              <span className="w-4 text-center">{regexColors[color as keyof typeof regexColors]}</span>
+                              <button onClick={() => setRegexColors(p => ({...p, [color]: Math.min(6, p[color as keyof typeof p] + 1)}))} className="w-6 h-6 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center">+</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <h4 className="text-sm font-semibold text-white mb-3">Options</h4>
+                      <div className="space-y-3">
+                        <label className="flex items-center gap-3 text-sm text-slate-300 cursor-pointer">
+                          <input type="checkbox" checked={regexMs} onChange={(e) => setRegexMs(e.target.checked)} className="rounded border-slate-600 bg-black/20 text-amber-500 focus:ring-amber-500" />
+                          Include Movement Speed
+                        </label>
+                        <div className="pt-2">
+                          <span className="text-xs text-slate-500 block mb-1">Max Links</span>
+                          <select 
+                            value={regexLinks} 
+                            onChange={(e) => setRegexLinks(Number(e.target.value))}
+                            className="w-full bg-black/20 border border-white/10 rounded p-2 text-sm text-white focus:outline-none focus:border-amber-500"
+                          >
+                            <option value={3}>3-Link</option>
+                            <option value={4}>4-Link</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-6">
+                    <h4 className="text-sm font-semibold text-white mb-2">Generated Regex</h4>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        readOnly 
+                        value={generatedRegex} 
+                        className="flex-1 bg-black/40 border border-white/10 rounded-lg p-3 font-mono text-amber-400 focus:outline-none"
+                        placeholder="Select options above..."
+                      />
+                      <button 
+                        onClick={() => { navigator.clipboard.writeText(generatedRegex); alert('Copied!'); }}
+                        disabled={!generatedRegex}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:hover:bg-amber-500 text-black font-bold rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <Copy className="w-4 h-4" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeToolTab === 'recipes' && (
+                <div className="space-y-4">
+                  {[
+                    { name: "Movement Speed Boots", recipe: "Normal Boots + Quicksilver Flask + Augmentation Orb", desc: "Adds 10% MS. Can be repeated with MS boots to upgrade tier." },
+                    { name: "Physical Damage Weapon", recipe: "Weapon + Rustic Sash + Blacksmith's Whetstone", desc: "Adds % Increased Physical Damage. Magic sash = better tier, Rare sash = best tier." },
+                    { name: "+1 Elemental Wand/Sceptre", recipe: "Magic Wand/Sceptre + Alteration Orb + Topaz/Ruby/Sapphire Ring", desc: "Adds +1 to Level of all Lightning/Fire/Cold Spell Skill Gems." },
+                    { name: "Spell Damage Wand", recipe: "Wand + Chain Belt + Blacksmith's Whetstone", desc: "Adds % Spell Damage based on belt rarity." },
+                    { name: "20% Quality Gem", recipe: "Level 20 Gem + 1 Gemcutter's Prism", desc: "Returns a Level 1 version of the gem with 20% Quality." },
+                    { name: "Bandit Respec", recipe: "20 Regret Orbs + Onyx/Lapis/Amber/Jade Amulet", desc: "Changes bandit choice. Onyx = Kill All, Lapis = Alira, Amber = Oak, Jade = Kraityn." }
+                  ].map((recipe, i) => (
+                    <div key={i} className="bg-black/20 border border-white/5 rounded-lg p-4">
+                      <h4 className="font-bold text-amber-500 mb-1">{recipe.name}</h4>
+                      <p className="text-sm text-white font-medium mb-1">{recipe.recipe}</p>
+                      <p className="text-xs text-slate-400">{recipe.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {activeToolTab === 'import' && (
+                <div className="space-y-6">
+                  <div className="bg-black/20 border border-white/5 rounded-lg p-5 text-center">
+                    <Download className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+                    <h3 className="font-bold text-white mb-2">Export Profile</h3>
+                    <p className="text-sm text-slate-400 mb-4">Share your custom route, notes, and progress with others.</p>
+                    <button onClick={handleExport} className="px-6 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold rounded-lg transition-colors">
+                      Copy Profile Code
+                    </button>
+                  </div>
+
+                  <div className="bg-black/20 border border-white/5 rounded-lg p-5">
+                    <div className="text-center mb-4">
+                      <Upload className="w-8 h-8 text-emerald-500 mx-auto mb-3" />
+                      <h3 className="font-bold text-white mb-2">Import Profile</h3>
+                      <p className="text-sm text-slate-400">Paste a profile code below to overwrite your current setup.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={importString}
+                        onChange={(e) => setImportString(e.target.value)}
+                        placeholder="Paste code here..."
+                        className="flex-1 bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <button 
+                        onClick={handleImport}
+                        disabled={!importString}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold rounded-lg transition-colors"
+                      >
+                        Import
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-[#1a1d24] border-b border-white/5 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -241,11 +497,19 @@ export default function App() {
             </div>
 
             <button
+              onClick={() => setToolsOpen(true)}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors"
+            >
+              <Wrench className="w-4 h-4" />
+              <span className="hidden sm:inline">Tools</span>
+            </button>
+
+            <button
               onClick={openEditor}
               className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors"
             >
               <Edit3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Edit Route</span>
+              <span className="hidden sm:inline">Route</span>
             </button>
 
             <button
@@ -432,14 +696,21 @@ export default function App() {
           <div className="bg-[#1a1d24] rounded-2xl border border-white/5 overflow-hidden shadow-xl">
             <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-                  {currentAct.title.includes('Mapping') ? (
-                    <Map className="w-6 h-6 text-amber-500" />
-                  ) : (
-                    <Trophy className="w-6 h-6 text-amber-500" />
+                <div className="flex items-center gap-3 mb-1">
+                  <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                    {currentAct.title.includes('Mapping') ? (
+                      <Map className="w-6 h-6 text-amber-500" />
+                    ) : (
+                      <Trophy className="w-6 h-6 text-amber-500" />
+                    )}
+                    {currentAct.title}
+                  </h2>
+                  {getActLevelRange(safeActIndex, currentAct.title) && (
+                    <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-xs font-medium border border-white/10">
+                      {getActLevelRange(safeActIndex, currentAct.title)}
+                    </span>
                   )}
-                  {currentAct.title}
-                </h2>
+                </div>
                 <div className="mt-4 h-1.5 w-48 sm:w-64 bg-slate-800 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-amber-500 transition-all duration-500 ease-out"
