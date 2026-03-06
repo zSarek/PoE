@@ -1,0 +1,5 @@
+{
+  "name": "PoE Progress Checker",
+  "description": "A progress tracker for Path of Exile campaign and early endgame.",
+  "requestFramePermissions": []
+}
